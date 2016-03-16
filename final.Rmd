@@ -1,0 +1,167 @@
+----
+author: "**Garima Garg**"
+header-includes:
+   - \usepackage{bbm}
+   output: html_document
+    fontsize: 8pt  
+----
+****************************************************************************************************
+# Least Squares Solutions for Sparse Matrices
+
+Here, the matrix A is sparse, and we are trying to find X that minimizes $\left | AX-b \right |_{2}^{2}$,   $A \epsilon R^{m*n}$ where $m\geq n$
+
+Following methods were used to find the least squares solution when A is sparse and m>n. <br/>
+- **Singular Value Decomposition** <br/>
+- **Successive Over Relaxation (SOR)** <br/>
+- **Ridge Regression (Constrained least squares)**
+
+
+****************************************************************************************************
+#Singular Value Decomposition <br/>
+
+$$A=U \Sigma V^T $$  <br/>
+$$x^{*} = V \Sigma^{-1} U^T b $$
+
+```{r}
+#simulate data
+m <- 10000
+n <- 500
+
+A <- matrix(rnorm(m * n), m, n)
+iz <- sample(1:(m * n),
+             size = m * n * 0.85,
+             replace = FALSE)
+A[iz] <- 0
+
+beta <- rnorm(n)
+b <- A %*% beta + rnorm(m)
+
+#rank of matrix
+rank <- qr(A)$rank
+
+# Start the clock!
+ptm <- proc.time()
+
+svd.data <- svd(A)
+result <- svd.data$v %*% diag(1/svd.data$d) %*% t(svd.data$u)
+x <- round(result %*% b, digits=4)
+```
+**Shows system time for SVD computation** 
+
+```{r}
+
+proc.time() - ptm
+
+predict <- A %*% x 
+residuals <- b- A %*% x
+```
+**Error using SVD method** 
+```{r, fig.width=4, fig.height=4}
+(error <- mean(residuals^2))
+plot(b ~ predict, main="Predicted vs actual values using SVD")
+
+```
+
+********************************************************************************************************************************
+#Successive Over Relaxation (SOR) <br/>
+
+SOR is an iterative method, and is a variant of the Gauss–Seidel method for solving a linear system of equations, resulting in faster convergence. Since A is not a square matrix, $A^{T}A$ is used instead.
+$$ x^{(k+1)} = (1-\omega) x^{k}+\omega(D+L)^{-1}(A^{T} b-U x^{k})$$
+$$ A^{T}A = L+U+D $$
+
+```{r}
+#function to implement SOR method. There wasn't any package in R that implements SOR.
+SOR <- function(B, b, x0, iter, omega){
+  
+  B <- t(A) %*% A 
+  D <- diag(diag(B))
+  L <- B
+  L[upper.tri(L, diag = TRUE)] <-0
+  B[lower.tri(B, diag = TRUE)] <-0
+  U <- B
+  
+  inv.dl <- solve(D+L)
+  #x <- rep(0, iter)
+  #x[1] <- x0
+  x <- x0
+  
+  for (i in 1:(iter-1))
+    x <- (1-omega)*x + omega* (inv.dl %*% (t(A) %*% b - U %*% x))
+  
+  return (x)
+}
+
+#sequence of omega's
+omega <- seq(-1, 2.5, by=0.2)
+error <- rep(0, length(omega))
+
+# Start the clock!
+ptm <- proc.time()
+
+#find the best omega that minimizes error
+for(i in 1:length(omega))
+  {
+  x <- SOR(A, b, x0= rep(0.2,500), iter=50, omega[i])
+  residuals <- b- A %*% x
+  error[i] <- round(mean(residuals^2), digits=3)
+  }
+```
+**System time to run SOR method**
+```{r, fig.width=4, fig.height=4}
+proc.time() - ptm
+
+plot(error~omega, main="find best omega that minimize error for SOR method", col = "dark red")
+omega.position <- which.min(error)
+```
+**Error using SOR method** 
+```{r, fig.width=4, fig.height=4}
+(error <- min(error))
+
+#using the best omega to get the predicted value and plotting the results
+final.x <- SOR(A, b, x0= rep(0.2,500), iter=50, omega[omega.position])
+predict <- A %*% final.x 
+plot(b ~ predict, main="Predicted vs actual values using SOR method")
+```
+
+********************************************************************************************************************************************
+# Ridge Regression <br/>
+
+This is constrained form of least squares and widely used in statistics. In this, we find X that minimizes  $\left | AX-b \right |_{2}^{2}$ subject to additional constraint $\sum_{i=1}^{j}X_{j}^2 < c$ where c is some constant c>0. <br/>
+This is equivalent to minimizing $\sum_{i=1}^{m} (AX-b)^{2}$ + $\lambda \sum_{j=1}^{n}X_{j}^2$, so in this method we find the optimal lambda that reduces the error.  <br/> <br/>
+
+This is solved by using R package glmnet. Additionally, glmnet handles sparse data, and hence more efficient.
+
+```{r, fig.width=4, fig.height=4}
+library(glmnet)
+A <- Matrix(A, sparse=TRUE)
+
+# Start the clock!
+ptm <- proc.time()
+
+fit = glmnet(x=A, y=b, alpha=0) # alpha=0 suggests ridge regression, there are other forms of constrained least squares too
+cvfit = cv.glmnet(x=A,y=b)
+plot(cvfit, main="lambda that minimizes error for Ridge regression")
+
+```
+<br/>
+**System time to run ridge regression**
+```{r}
+proc.time() - ptm
+
+predict <- predict(cvfit, newx = A, s = "lambda.min")
+residuals <- b - predict
+```
+**Error using Ridge Regression method** 
+```{r, fig.width=4, fig.height=4}
+(error <- mean(residuals^2))
+plot(b ~ predict, main="Predicted vs actual values using Ridge Regression")
+
+```
+
+************************************************************************************************************************************
+#Conclusions <br/>
+SVD and Ridge regression(constrained least squares) performs better than Successive Over Relaxation in terms of system time. Error is almost same for all the three methods.  <br/>
+
+#Future Work 
+Advanced iterative methods and other forms of constrained least squares(like L1 penalty) can be used when matrix A is sparse and m>n. 
+
